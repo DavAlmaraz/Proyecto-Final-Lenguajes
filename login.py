@@ -1,3 +1,6 @@
+##  ESTA pantalla no se va a usar,  no tiene nigun fin en este proyecto
+##  pero por si las dudas no se eliminara el archivo
+
 import customtkinter as ctk
 from tkinter import messagebox
 from PIL import Image
@@ -33,7 +36,7 @@ franja_superior.pack(fill="x", side="top")
 
 # Logo
 try:
-    logo = ctk.CTkImage(light_image=Image.open("LOGO_GARZA.jpeg"), size=(600, 150))
+    logo = ctk.CTkImage(light_image=Image.open("LOGO_GARZA.jpg"), size=(600, 150))
     logo_label = ctk.CTkLabel(franja_superior, image=logo, text="")
     logo_label.pack(side="left", padx=0, pady=0)
 except Exception:
