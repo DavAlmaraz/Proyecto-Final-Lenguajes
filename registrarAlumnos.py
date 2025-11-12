@@ -2,24 +2,23 @@
 excel_to_mysql_gui.py
 GUI para importar Excel y crear tabla SQL en MySQL Workbench
 
-
 Requisitos:
- 1- Abrir la terminal con la direccion de tu proyecto
- 2- intalar las sigientes librerias
- pip install pandas openpyxl mysql-connector-python
-
+ 1- Abrir la terminal con la dirección del proyecto
+ 2- Instalar librerías:
+    pip install pandas openpyxl mysql-connector-python
 """
 
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
-from conexion import conectar_mysql  # ✅ Importación corregida
-
+from conexion import conectar_mysql
+# 🔹 Importamos la función del otro archivo
+from email_notify import mostrar_progreso_envio
 
 class ExcelToMySQLApp(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title("Importar Excel a MySQL")
+        self.title("Importar Excel de Alumnos a MySQL")
         self.geometry("900x600")
 
         self.filepath = None
@@ -33,7 +32,7 @@ class ExcelToMySQLApp(tk.Tk):
         self.file_label = ttk.Label(frame_top, text="Ningún archivo seleccionado", foreground="gray")
         self.file_label.pack(side="left")
 
-        # --- Frame medio (vista previa tabla) ---
+        # --- Frame medio (vista previa) ---
         frame_mid = ttk.Frame(self)
         frame_mid.pack(fill="both", expand=True, padx=10, pady=10)
 
@@ -43,12 +42,13 @@ class ExcelToMySQLApp(tk.Tk):
         vsb.pack(side="right", fill="y")
         self.tree.configure(yscroll=vsb.set)
 
-        # --- Frame inferior (nombre de tabla) ---
+        # --- Frame inferior ---
         frame_bottom = ttk.LabelFrame(self, text="Configuración de importación", padding=10)
         frame_bottom.pack(fill="x", padx=10, pady=10)
 
         ttk.Label(frame_bottom, text="Nombre de tabla:").grid(row=0, column=0, sticky="e")
         self.table_entry = ttk.Entry(frame_bottom)
+        self.table_entry.insert(0, "alumnos")
         self.table_entry.grid(row=0, column=1, padx=5, pady=3)
 
         ttk.Button(frame_bottom, text="Enviar a MySQL", command=self.send_to_mysql).grid(row=1, column=0, columnspan=2, pady=8)
@@ -66,7 +66,7 @@ class ExcelToMySQLApp(tk.Tk):
         try:
             df = pd.read_excel(filepath)
             df = df.fillna("")
-            df.columns = [str(c).strip() for c in df.columns]
+            df.columns = [str(c).strip().lower().replace(" ", "_") for c in df.columns]
 
             self.df = df
             self.filepath = filepath
@@ -84,28 +84,10 @@ class ExcelToMySQLApp(tk.Tk):
 
         for col in df.columns:
             self.tree.heading(col, text=col)
-            self.tree.column(col, width=120, stretch=True)
+            self.tree.column(col, width=150, stretch=True)
 
         for _, row in df.head(max_rows).iterrows():
             self.tree.insert("", "end", values=list(row))
-
-        if len(df) > max_rows:
-            self.status_label.config(text=f"Mostrando primeras {max_rows} de {len(df)} filas.")
-
-    # --- Detectar tipo SQL adecuado ---
-    def infer_sql_type(self, series: pd.Series) -> str:
-        if pd.api.types.is_integer_dtype(series):
-            return "INT"
-        elif pd.api.types.is_float_dtype(series):
-            return "FLOAT"
-        elif pd.api.types.is_bool_dtype(series):
-            return "BOOLEAN"
-        elif pd.api.types.is_datetime64_any_dtype(series):
-            return "DATETIME"
-        else:
-            max_len = series.astype(str).map(len).max()
-            length = min(max_len + 10, 255)
-            return f"VARCHAR({length})"
 
     # --- Enviar datos a MySQL ---
     def send_to_mysql(self):
@@ -113,44 +95,80 @@ class ExcelToMySQLApp(tk.Tk):
             messagebox.showwarning("Advertencia", "Primero carga un archivo Excel.")
             return
 
-        table = self.table_entry.get()
+        table = self.table_entry.get().strip()
         if not table:
-            messagebox.showwarning("Campos incompletos", "Por favor ingresa el nombre de la tabla.")
+            messagebox.showwarning("Advertencia", "Por favor ingresa un nombre de tabla.")
             return
 
-        # 🔹 Conexión usando configuración centralizada
         conn, cursor = conectar_mysql()
-
         if not conn:
-            messagebox.showerror("Error MySQL", "No se pudo conectar a la base de datos. Revisa la configuración en 'mysql_connection.py'.")
-            self.status_label.config(text="Error al conectar a MySQL")
+            messagebox.showerror("Error", "No se pudo conectar a MySQL.")
             return
 
         try:
-            # Crear tabla con tipos adecuados
-            cols = []
-            for col in self.df.columns:
-                col_name = col.replace(" ", "_").replace(".", "_")
-                sql_type = self.infer_sql_type(self.df[col])
-                cols.append(f"`{col_name}` {sql_type}")
-            col_defs = ", ".join(cols)
-            create_sql = f"CREATE TABLE IF NOT EXISTS `{table}` ({col_defs});"
-            cursor.execute(create_sql)
+            # 🔹 Crear tabla fija de alumnos
+            cursor.execute(f"""
+                CREATE TABLE IF NOT EXISTS `{table}` (
+                    num_cuenta INT PRIMARY KEY,
+                    nombre_completo VARCHAR(150),
+                    correo VARCHAR(100),
+                    clave VARCHAR(100)
+                );
+            """)
             conn.commit()
 
-            # Insertar datos
-            placeholders = ", ".join(["%s"] * len(self.df.columns))
-            insert_sql = f"INSERT INTO `{table}` ({', '.join(['`'+c.replace(' ', '_').replace('.', '_')+'`' for c in self.df.columns])}) VALUES ({placeholders})"
+            # --- Detectar columnas equivalentes ---
+            col_map = {
+                "num_cuenta": None,
+                "nombre_completo": None,
+                "correo": None,
+                "clave": None
+            }
+
+            for col in self.df.columns:
+                c = col.lower()
+                if "cuenta" in c or "id" in c:
+                    col_map["num_cuenta"] = col
+                elif "nombre" in c:
+                    col_map["nombre_completo"] = col
+                elif "correo" in c or "email" in c:
+                    col_map["correo"] = col
+                elif "clave" in c or "contraseña" in c or "password" in c:
+                    col_map["clave"] = col
+
+            # --- Verificar que se hayan detectado todas las columnas ---
+            faltantes = [k for k, v in col_map.items() if v is None]
+            if faltantes:
+                raise ValueError(f"No se encontraron las columnas requeridas: {', '.join(faltantes)} en el Excel")
+
+            # --- Insertar datos ---
+            insert_sql = f"""
+                INSERT INTO `{table}` (num_cuenta, nombre_completo, correo, clave)
+                VALUES (%s, %s, %s, %s)
+                ON DUPLICATE KEY UPDATE
+                    nombre_completo=VALUES(nombre_completo),
+                    correo=VALUES(correo),
+                    clave=VALUES(clave);
+            """
 
             for _, row in self.df.iterrows():
-                cursor.execute(insert_sql, tuple(row.values))
-            conn.commit()
+                cursor.execute(insert_sql, (
+                    int(row[col_map["num_cuenta"]]),
+                    str(row[col_map["nombre_completo"]]),
+                    str(row[col_map["correo"]]),
+                    str(row[col_map["clave"]])
+                ))
 
-            messagebox.showinfo("Éxito", f"Tabla '{table}' creada e importada correctamente en MySQL Workbench.")
-            self.status_label.config(text=f"Tabla '{table}' creada con éxito.")
+
+            conn.commit()
+            messagebox.showinfo("Éxito", f"Se registraron {len(self.df)} alumnos correctamente en '{table}'.")
+            self.status_label.config(text=f"Tabla '{table}' creada y datos insertados correctamente.")
+            # 🔹 Aquí se abre la ventana del envío de correos
+            mostrar_progreso_envio(self, table)
+
         except Exception as e:
             messagebox.showerror("Error MySQL", f"Ocurrió un error durante la importación:\n{e}")
-            self.status_label.config(text="Error durante importación")
+            self.status_label.config(text="Error durante la importación.")
         finally:
             cursor.close()
             conn.close()
