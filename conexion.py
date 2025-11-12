@@ -48,7 +48,7 @@ def conectar_mysql():
         if conn.is_connected():
             cursor = conn.cursor()
             print(f"✅ Conectado a MySQL ({CONFIG['database']}) en {CONFIG['host']}")
-            mostrar_alerta("Conexión Exitosa", f"Conectado a la base de datos '{CONFIG['database']}' correctamente ✅", "info")
+           # mostrar_alerta("Conexión Exitosa", f"Conectado a la base de datos '{CONFIG['database']}' correctamente ✅", "info")
             return conn, cursor
 
     except Error as e:
